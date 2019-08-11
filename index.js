@@ -2,8 +2,21 @@ const express = require('express');
 
 const bodyParser = require('body-parser');
 
+const bcrypt = require('bcrypt-nodejs');
+
 const cors  = require('cors');
 
+const knex = require('knex');
+
+const postgres = knex({
+    client:'pg',
+    connection: {
+        host: '127.0.0.1',
+        user : 'postgres',
+        password :'hellohigh',
+        database : 'smart_brain',
+    }
+});
 
 
 const app = express();
@@ -12,26 +25,6 @@ app.use(bodyParser.json());
 
 app.use(cors());
 
-const database = {
-    users : [
-        {
-            id : 123,
-            name : 'john',
-            email : 'john@gmail.com',
-            password : 'cookies',
-            entries : 0,
-            joined : new Date()
-        },
-        {
-            id : 124,
-            name : 'sally',
-            email : 'sally@gmail.com',
-            password : 'bananas',
-            entries : 0,
-            joined : new Date()
-        }
-    ]
-}
 
 //On GET request
 app.get('/' , (req,res) => {
@@ -40,59 +33,78 @@ app.get('/' , (req,res) => {
 
 //SignIN
 app.post('/signin' , (req , res) => {
-    if(req.body.email == database.users[0].email
-        &&req.body.password == database.users[0].password)
-        res.json(database.users[0]);
-    else{  
-        res.status(400).json('error');
-    }
+    const {email , password} = req.body;
+    postgres.select('email','hash').from('login')
+        .where('email','=',email)
+        .then(data => {
+            const isValid = bcrypt.compareSync(password,data[0].hash);
+            if(isValid){
+                return postgres.select('*').from('users')
+                        .where('email','=',email)
+                        .then(user => {
+                             res.json(user[0])
+                        })
+                        .catch(err => res.status(400).json('unable to get user'))
+            }     
+            else{
+                res.json('wrong credentials').status(400)
+            }       
+        })
+        .catch(err => res.status(400).json('wrong credentials'))
 })
 
 //register
 app.post('/register',(req,res)=>{
     const {email , name , password} = req.body;
-    database.users.push({
-        id : 12345,
-        name : name,
-        email : email,
-        password : password,
-        entries : 0,
-        joined : new Date()
-    });
-    res.json(database.users[database.users.length -1]);
+    const hash = bcrypt.hashSync(password);
+    postgres.transaction(trx => {
+        trx.insert({
+            email: email,
+            hash: hash
+        })
+        .into('login')
+        .returning('email')
+        .then(loginEmail => {
+            return trx('users')
+                .returning('*')
+                .insert({
+                    email : loginEmail[0],
+                    name : name,
+                    joined: new Date()
+                })
+                .then(user => res.json(user[0]))
+        })
+        .then(trx.commit)
+        .catch(trx.rollback)
+    })
+        .catch(err => res.json('unable to register'))
+    
 })
 
 //profile
 app.get('/profile/:id' , (req,res) => {
     const { id } = (req.params);
-    id = number(id);
-    console.log(id);
-    let found = false;
-    database.users.forEach(user => {
-        if(id === user.id){
-            found = true;
-            return res.json(user);
-        }
-    })
-    if(!found){
-        res.json("user not found");
-    }
+    postgres.select('*').where({id : id}).from('users')
+        .then(user => {
+            if(user.length){
+                res.json(user[0]);
+            }
+            else{
+                res.status(400).json('not found');
+            }
+        })
 })
 
 app.put('/image' , (req,res) => {
     const { id } = (req.body);
-    console.log(id);
-    let found = false;
-    database.users.forEach(user => {
-        if(id == user.id){
-            found = true;
-            user.entries++;
-            return res.json(user.entries);
-        }
-    })
-    if(!found){
-        res.json("user not found");
-    }
+    postgres('users')
+        .where('id', '=', id)
+        .increment('entries',1)
+        .returning('entries')
+        .then(entries => {
+            res.json(entries[0]);
+        })
+        .catch(err => res.status(400).json('unable to get entries'))
 })
 
 
