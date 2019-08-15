@@ -28,7 +28,7 @@ app.use(cors());
 
 //On GET request
 app.get('/' , (req,res) => {
-    res.send(database.users);
+    res.send("it is working");
 })
 
 //SignIN
